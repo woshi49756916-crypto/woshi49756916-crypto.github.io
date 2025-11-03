@@ -10,9 +10,11 @@
 // Zalo OAuth配置 - 需要替换为实际的配置
 const ZALO_CONFIG = {
     // Zalo App ID - 需要在Zalo开发者平台获取
-    appId: getUrlParameter('app_id') || '',
+    // appId: getUrlParameter('app_id') || '',
+    appId: '548583800445969563',
     // Zalo App Secret - 用于服务器端交换token（如果需要在中间页直接处理，注意安全性）
-    appSecret: getUrlParameter('app_secret') || '',
+    // appSecret: getUrlParameter('app_secret') || '',
+    appSecret: 'y6kCG08P3t0UQ0S16eJK',
     // 授权回调地址 - 需要与Zalo开发者平台配置的回调地址一致
     redirectUri: getUrlParameter('redirect_uri') || window.location.origin + window.location.pathname,
     // Zalo OAuth授权地址
