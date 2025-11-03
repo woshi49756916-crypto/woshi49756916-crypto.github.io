@@ -274,9 +274,9 @@ function sendResultToFlutter(result, isError) {
             }, '*'); // 注意：生产环境应该指定具体的origin
             
             // 延迟关闭，确保消息已发送
-            setTimeout(() => {
-                window.close();
-            }, 100);
+            // setTimeout(() => {
+            //     window.close();
+            // }, 100);
         } catch (error) {
             console.error('postMessage失败，尝试使用URL方案：', error);
             fallbackToUrlScheme(result, isError);
