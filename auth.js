@@ -98,6 +98,7 @@ function redirectToZaloAuth() {
     const authUrl = `${ZALO_CONFIG.authUrl}?${authParams.toString()}`;
     
     showStatus('正在跳转到Zalo授权页面...', 'info');
+    console.log('跳转地址：', authUrl);
     window.location.href = authUrl;
 }
 
