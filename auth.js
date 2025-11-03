@@ -19,6 +19,7 @@ const ZALO_CONFIG = {
     // 自动使用当前页面的完整URL作为回调地址，支持子路径和根路径部署
     // redirectUri: getUrlParameter('redirect_uri') || window.location.origin + window.location.pathname,
     redirectUri: 'https://woshi49756916-crypto.github.io/zalo-redirct',
+    // https://oauth.zaloapp.com/v4/permission?app_id=548583800445969563&redirect_uri=https://woshi49756916-crypto.github.io/zalo-redirct&state=abc
     // Zalo OAuth授权地址
     // authUrl: 'https://oauth.zalo.me/v4/oa/permission',
     authUrl: 'https://oauth.zaloapp.com/v4/permission',
