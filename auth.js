@@ -21,7 +21,7 @@ const ZALO_CONFIG = {
     redirectUri: 'https://woshi49756916-crypto.github.io/zalo-redirct',
     // Zalo OAuth授权地址
     // authUrl: 'https://oauth.zalo.me/v4/oa/permission',
-    authUrl: 'https://oauth.zaloapp.com/v4/permission',
+    authUrl: 'https://oauth.zaloapp.com/v4/oa/permission',
     // Zalo Token交换地址（注意：需要使用POST方法）
     // tokenUrl: 'https://oauth.zalo.me/v4/oa/access_token',
     // tokenUrl: 'https://oauth.zaloapp.com/v4/access_token',
