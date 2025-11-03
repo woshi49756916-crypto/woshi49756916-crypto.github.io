@@ -19,7 +19,6 @@ const ZALO_CONFIG = {
     // 自动使用当前页面的完整URL作为回调地址，支持子路径和根路径部署
     // redirectUri: getUrlParameter('redirect_uri') || window.location.origin + window.location.pathname,
     redirectUri: 'https://woshi49756916-crypto.github.io/zalo-redirct',
-    // https://oauth.zaloapp.com/v4/permission?app_id=548583800445969563&redirect_uri=https://woshi49756916-crypto.github.io/zalo-redirct&state=abc
     // Zalo OAuth授权地址
     // authUrl: 'https://oauth.zalo.me/v4/oa/permission',
     authUrl: 'https://oauth.zaloapp.com/v4/permission',
@@ -98,7 +97,6 @@ function redirectToZaloAuth() {
     const authUrl = `${ZALO_CONFIG.authUrl}?${authParams.toString()}`;
     
     showStatus('正在跳转到Zalo授权页面...', 'info');
-    console.log('跳转地址：', authUrl);
     window.location.href = authUrl;
 }
 
@@ -340,16 +338,27 @@ document.addEventListener('DOMContentLoaded', () => {
 // 监听来自Flutter的消息（可选，用于确认消息接收）
 window.addEventListener('message', (event) => {
     // 处理来自zalo-redirct.html的回调消息
-    if (event.data && event.data.type === 'zalo_auth_callback' && event.data.url) {
+    if (event.data && event.data.type === 'zalo_auth_callback') {
         try {
-            // 解析回调URL中的参数
-            const callbackUrl = new URL(event.data.url);
-            const code = callbackUrl.searchParams.get('code');
-            const state = callbackUrl.searchParams.get('state');
-            const error = callbackUrl.searchParams.get('error');
+            let code, state, error;
+            
+            // 优先使用直接传递的参数（更高效）
+            if (event.data.code !== undefined || event.data.error !== undefined) {
+                code = event.data.code;
+                state = event.data.state;
+                error = event.data.error;
+            } 
+            // 备用方案：从URL中解析参数
+            else if (event.data.url) {
+                const callbackUrl = new URL(event.data.url);
+                code = callbackUrl.searchParams.get('code');
+                state = callbackUrl.searchParams.get('state');
+                error = callbackUrl.searchParams.get('error') || callbackUrl.searchParams.get('error_code');
+            }
             
             // 如果有错误，显示错误信息
             if (error) {
+                console.error('Zalo授权错误:', error);
                 showStatus(`授权失败：${error}`, 'error');
                 setTimeout(() => {
                     sendResultToFlutter({ error: error }, true);
@@ -359,10 +368,14 @@ window.addEventListener('message', (event) => {
             
             // 如果有授权码，处理授权回调
             if (code) {
+                console.log('收到Zalo授权码，开始处理...');
                 handleAuthCallbackWithCode(code, state);
+            } else {
+                console.warn('收到回调消息但缺少授权码');
             }
         } catch (err) {
             console.error('处理Zalo回调消息失败:', err);
+            showStatus('处理回调消息时发生错误', 'error');
         }
     }
     
