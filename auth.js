@@ -314,10 +314,16 @@ function sendResultToFlutter(result, isError) {
                 timestamp: Date.now()
             }, '*'); // 注意：生产环境应该指定具体的origin
             
-            // 延迟关闭，确保消息已发送
-            // setTimeout(() => {
-            //     window.close();
-            // }, 100);
+            console.log('授权结果已发送给Flutter', isError ? '(失败)' : '(成功)');
+            
+            // 延迟关闭窗口，确保消息已发送
+            setTimeout(() => {
+                try {
+                    window.close();
+                } catch (closeErr) {
+                    console.warn('无法关闭窗口:', closeErr);
+                }
+            }, 500);
         } catch (error) {
             console.error('postMessage失败，尝试使用URL方案：', error);
             fallbackToUrlScheme(result, isError);
@@ -335,6 +341,12 @@ function fallbackToUrlScheme(result, isError) {
         
         if (isError) {
             params.append('error', result.error || 'unknown_error');
+            if (result.error_code) {
+                params.append('error_code', result.error_code);
+            }
+            if (result.error_details) {
+                params.append('error_details', result.error_details);
+            }
         } else {
             params.append('access_token', result.access_token);
             params.append('user_id', result.user_id);
@@ -348,15 +360,25 @@ function fallbackToUrlScheme(result, isError) {
         // 尝试跳转到自定义scheme
         window.location.href = callbackUrl;
         
-        // 如果无法打开自定义scheme，关闭窗口
-        // setTimeout(() => {
-        //     window.close();
-        // }, 1000);
+        // 延迟关闭窗口，确保URL Scheme已处理
+        setTimeout(() => {
+            try {
+                window.close();
+            } catch (closeErr) {
+                console.warn('无法关闭窗口:', closeErr);
+            }
+        }, 1000);
         
     } catch (error) {
         console.error('URL Scheme方案失败：', error);
-        // 最后尝试直接关闭
-        // window.close();
+        // 如果URL Scheme失败，尝试直接关闭窗口
+        setTimeout(() => {
+            try {
+                window.close();
+            } catch (closeErr) {
+                console.warn('无法关闭窗口:', closeErr);
+            }
+        }, 500);
     }
 }
 
