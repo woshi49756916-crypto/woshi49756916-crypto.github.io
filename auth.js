@@ -71,27 +71,49 @@ function verifyState(state) {
 
 // 跳转到Zalo授权页面
 function redirectToZaloAuth() {
-    if (!ZALO_CONFIG.appId) {
-        showStatus('错误：缺少Zalo App ID配置', 'error');
-        return;
+    try {
+        if (!ZALO_CONFIG.appId) {
+            const errorMsg = '错误：缺少Zalo App ID配置';
+            showStatus(errorMsg, 'error');
+            setTimeout(() => {
+                sendResultToFlutter({ error: errorMsg }, true);
+            }, 2000);
+            return;
+        }
+
+        if (!ZALO_CONFIG.redirectUri) {
+            const errorMsg = '错误：缺少授权回调地址配置';
+            showStatus(errorMsg, 'error');
+            setTimeout(() => {
+                sendResultToFlutter({ error: errorMsg }, true);
+            }, 2000);
+            return;
+        }
+
+        const state = generateRandomString();
+        saveState(state);
+
+        // 构建Zalo授权URL
+        const authParams = new URLSearchParams({
+            app_id: ZALO_CONFIG.appId,
+            redirect_uri: ZALO_CONFIG.redirectUri,
+            state: state,
+            // Zalo需要的权限范围
+            scope: 'id,name,birthday,gender,picture'
+        });
+
+        const authUrl = `${ZALO_CONFIG.authUrl}?${authParams.toString()}`;
+        
+        showStatus('正在跳转到Zalo授权页面...', 'info');
+        window.location.href = authUrl;
+    } catch (error) {
+        console.error('跳转授权页面失败：', error);
+        const errorMsg = `跳转授权页面失败：${error.message || error}`;
+        showStatus(errorMsg, 'error');
+        setTimeout(() => {
+            sendResultToFlutter({ error: errorMsg }, true);
+        }, 2000);
     }
-
-    const state = generateRandomString();
-    saveState(state);
-
-    // 构建Zalo授权URL
-    const authParams = new URLSearchParams({
-        app_id: ZALO_CONFIG.appId,
-        redirect_uri: ZALO_CONFIG.redirectUri,
-        state: state,
-        // Zalo需要的权限范围
-        scope: 'id,name,birthday,gender,picture'
-    });
-
-    const authUrl = `${ZALO_CONFIG.authUrl}?${authParams.toString()}`;
-    
-    showStatus('正在跳转到Zalo授权页面...', 'info');
-    window.location.href = authUrl;
 }
 
 // 处理授权回调（从Zalo返回）
@@ -132,14 +154,16 @@ async function handleAuthCallback() {
         const tokenData = await exchangeCodeForToken(code);
         
         if (!tokenData || !tokenData.access_token) {
-            throw new Error('无法获取access_token');
+            const errorMsg = tokenData?.error_description || tokenData?.error || '无法获取access_token';
+            throw new Error(errorMsg);
         }
 
         showStatus('正在获取用户信息...', 'info');
         const userInfo = await getUserInfo(tokenData.access_token);
         
         if (!userInfo || !userInfo.id) {
-            throw new Error('无法获取用户信息');
+            const errorMsg = userInfo?.message || userInfo?.error || '无法获取用户信息';
+            throw new Error(errorMsg);
         }
 
         // 准备返回数据
@@ -166,9 +190,14 @@ async function handleAuthCallback() {
 
     } catch (error) {
         console.error('授权流程错误：', error);
-        showStatus(`授权失败：${error.message}`, 'error');
+        const errorMsg = error.message || error.toString() || '未知错误';
+        showStatus(`授权失败：${errorMsg}`, 'error');
         setTimeout(() => {
-            sendResultToFlutter({ error: error.message }, true);
+            sendResultToFlutter({ 
+                error: errorMsg,
+                error_code: error.code || error.error || null,
+                error_details: error.error_description || null
+            }, true);
         }, 2000);
     }
 }
@@ -333,17 +362,59 @@ function fallbackToUrlScheme(result, isError) {
 
 // 页面加载完成后执行
 document.addEventListener('DOMContentLoaded', () => {
-    // 检查是否是授权回调
-    const urlParams = new URLSearchParams(window.location.search);
-    const code = urlParams.get('code');
-    const error = urlParams.get('error');
+    try {
+        // 检查是否是授权回调
+        const urlParams = new URLSearchParams(window.location.search);
+        const code = urlParams.get('code');
+        const error = urlParams.get('error');
 
-    if (code || error) {
-        // 有code或error，说明是Zalo回调
-        handleAuthCallback();
-    } else {
-        // 首次访问，跳转到授权页面
-        redirectToZaloAuth();
+        if (code || error) {
+            // 有code或error，说明是Zalo回调
+            handleAuthCallback();
+        } else {
+            // 首次访问，跳转到授权页面
+            redirectToZaloAuth();
+        }
+    } catch (error) {
+        console.error('页面初始化错误：', error);
+        const errorMsg = error.message || error.toString() || '页面初始化失败';
+        showStatus(errorMsg, 'error');
+        setTimeout(() => {
+            sendResultToFlutter({ 
+                error: errorMsg,
+                error_code: 'initialization_error'
+            }, true);
+        }, 2000);
+    }
+});
+
+// 全局错误处理（捕获未处理的错误）
+window.addEventListener('error', (event) => {
+    console.error('全局错误捕获：', event.error);
+    if (event.error && typeof sendResultToFlutter === 'function') {
+        const errorMsg = event.error.message || event.message || '发生未知错误';
+        showStatus(`错误：${errorMsg}`, 'error');
+        setTimeout(() => {
+            sendResultToFlutter({ 
+                error: errorMsg,
+                error_code: 'unhandled_error'
+            }, true);
+        }, 2000);
+    }
+});
+
+// 捕获未处理的Promise拒绝
+window.addEventListener('unhandledrejection', (event) => {
+    console.error('未处理的Promise拒绝：', event.reason);
+    if (event.reason && typeof sendResultToFlutter === 'function') {
+        const errorMsg = event.reason?.message || event.reason?.toString() || 'Promise处理失败';
+        showStatus(`错误：${errorMsg}`, 'error');
+        setTimeout(() => {
+            sendResultToFlutter({ 
+                error: errorMsg,
+                error_code: 'unhandled_promise_rejection'
+            }, true);
+        }, 2000);
     }
 });
 
@@ -371,9 +442,13 @@ window.addEventListener('message', (event) => {
             // 如果有错误，显示错误信息
             if (error) {
                 console.error('Zalo授权错误:', error);
-                showStatus(`授权失败：${error}`, 'error');
+                const errorMsg = error || '授权失败';
+                showStatus(`授权失败：${errorMsg}`, 'error');
                 setTimeout(() => {
-                    sendResultToFlutter({ error: error }, true);
+                    sendResultToFlutter({ 
+                        error: errorMsg,
+                        error_code: 'zalo_auth_error'
+                    }, true);
                 }, 2000);
                 return;
             }
@@ -387,7 +462,14 @@ window.addEventListener('message', (event) => {
             }
         } catch (err) {
             console.error('处理Zalo回调消息失败:', err);
-            showStatus('处理回调消息时发生错误', 'error');
+            const errorMsg = err.message || err.toString() || '处理回调消息时发生错误';
+            showStatus(errorMsg, 'error');
+            setTimeout(() => {
+                sendResultToFlutter({ 
+                    error: errorMsg,
+                    error_code: 'callback_processing_error'
+                }, true);
+            }, 2000);
         }
     }
     
@@ -415,14 +497,16 @@ async function handleAuthCallbackWithCode(code, state) {
         const tokenData = await exchangeCodeForToken(code);
         
         if (!tokenData || !tokenData.access_token) {
-            throw new Error('无法获取access_token');
+            const errorMsg = tokenData?.error_description || tokenData?.error || '无法获取access_token';
+            throw new Error(errorMsg);
         }
 
         showStatus('正在获取用户信息...', 'info');
         const userInfo = await getUserInfo(tokenData.access_token);
         
         if (!userInfo || !userInfo.id) {
-            throw new Error('无法获取用户信息');
+            const errorMsg = userInfo?.message || userInfo?.error || '无法获取用户信息';
+            throw new Error(errorMsg);
         }
 
         // 准备返回数据
@@ -449,9 +533,14 @@ async function handleAuthCallbackWithCode(code, state) {
 
     } catch (error) {
         console.error('授权流程错误：', error);
-        showStatus(`授权失败：${error.message}`, 'error');
+        const errorMsg = error.message || error.toString() || '未知错误';
+        showStatus(`授权失败：${errorMsg}`, 'error');
         setTimeout(() => {
-            sendResultToFlutter({ error: error.message }, true);
+            sendResultToFlutter({ 
+                error: errorMsg,
+                error_code: error.code || error.error || null,
+                error_details: error.error_description || null
+            }, true);
         }, 2000);
     }
 }
