@@ -52,38 +52,52 @@
             console.log('Zalo回调参数:', { code: code ? '已接收' : '无', state: state || '无', error: error || '无' });
             
             try {
-                // 方案1：如果有父窗口（通过window.open打开），使用postMessage
+                // 方案1：如果有父窗口，尝试通过postMessage发送回调
+                // 注意：由于index.html在弹窗内跳转到Zalo，Zalo重定向回来时，window.opener可能仍然存在
+                // 如果window.opener是index.html，它会处理消息；如果是Flutter，它会忽略，然后我们重定向到index.html
                 if (window.opener && !window.opener.closed) {
-                    console.log('检测到父窗口，使用postMessage发送回调');
+                    console.log('检测到父窗口，尝试发送postMessage');
                     var currentUrl = window.location.href;
-                    window.opener.postMessage({
-                        type: 'zalo_auth_callback',
-                        url: currentUrl,
-                        code: code,
-                        state: state,
-                        error: error,
-                        timestamp: Date.now()
-                    }, '*'); // 注意：生产环境应指定具体origin
                     
-                    // 延迟关闭窗口，确保消息已发送
+                    try {
+                        // 尝试发送消息给父窗口（可能是index.html或Flutter）
+                        window.opener.postMessage({
+                            type: 'zalo_auth_callback',
+                            url: currentUrl,
+                            code: code,
+                            state: state,
+                            error: error,
+                            timestamp: Date.now()
+                        }, '*'); // 注意：生产环境应指定具体origin
+                        
+                        console.log('postMessage已发送，等待父窗口处理...');
+                    } catch (postErr) {
+                        console.warn('postMessage发送失败:', postErr);
+                    }
+                    
+                    // 无论postMessage是否成功，都延迟后重定向到index.html
+                    // 这样可以确保即使postMessage失败，也能通过index.html处理
                     setTimeout(function() {
-                        if (window.opener && !window.opener.closed) {
-                            window.close();
-                        } else {
-                            document.body.innerHTML = '<div class="message"><p>✅ 授权成功！窗口已关闭。</p></div>';
+                        try {
+                            // 重定向到index.html，让index.html处理完整的授权流程
+                            // index.html会检查URL参数，如果有code则处理
+                            var redirectUrl = window.location.origin + '/index.html?' + window.location.search.substring(1);
+                            window.location.href = redirectUrl;
+                        } catch (redirectErr) {
+                            console.error('重定向失败:', redirectErr);
+                            document.body.innerHTML = '<div class="message"><p style="color: #ff6b6b;">❌ 处理失败，请手动关闭窗口。</p></div>';
                         }
-                    }, 200);
+                    }, 500); // 给postMessage一些时间
                 } 
-                // 方案2：如果没有父窗口（直接访问），重定向到index.html
+                // 方案2：如果没有父窗口（直接访问），直接重定向到index.html处理
                 else {
                     console.log('未检测到父窗口，重定向到index.html处理回调');
-                    // 将参数传递给index.html
                     var redirectUrl = window.location.origin + '/index.html?' + window.location.search.substring(1);
                     window.location.href = redirectUrl;
                 }
             } catch (err) {
                 console.error('Zalo回调处理错误:', err);
-                // 如果postMessage失败，尝试重定向到index.html
+                // 如果出错，尝试重定向到index.html
                 try {
                     var redirectUrl = window.location.origin + '/index.html?' + window.location.search.substring(1);
                     window.location.href = redirectUrl;
