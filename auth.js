@@ -7,18 +7,14 @@
  * 4. 关闭中间页
  */
 
-// Zalo OAuth配置 - 需要替换为实际的配置
+// Zalo OAuth配置 - 优先从URL参数读取，如果没有则使用默认值
 const ZALO_CONFIG = {
-    // Zalo App ID - 需要在Zalo开发者平台获取
-    // appId: getUrlParameter('app_id') || '',
-    appId: '548583800445969563',
-    // Zalo App Secret - 用于服务器端交换token（如果需要在中间页直接处理，注意安全性）
-    // appSecret: getUrlParameter('app_secret') || '',
-    appSecret: 'y6kCG08P3t0UQ0S16eJK',
-    // 授权回调地址 - 需要与Zalo开发者平台配置的回调地址一致
-    // 自动使用当前页面的完整URL作为回调地址，支持子路径和根路径部署
-    // redirectUri: getUrlParameter('redirect_uri') || window.location.origin + window.location.pathname,
-    redirectUri: 'https://woshi49756916-crypto.github.io/zalo-redirct',
+    // Zalo App ID - 优先从URL参数读取，如果没有则使用默认值
+    appId: getUrlParameter('app_id') || '548583800445969563',
+    // Zalo App Secret - 优先从URL参数读取（如果需要在中间页直接处理，注意安全性）
+    appSecret: getUrlParameter('app_secret') || 'y6kCG08P3t0UQ0S16eJK',
+    // 授权回调地址 - 优先从URL参数读取，如果没有则使用当前页面URL
+    redirectUri: getUrlParameter('redirect_uri') || window.location.origin + window.location.pathname,
     // Zalo OAuth授权地址
     authUrl: 'https://oauth.zaloapp.com/v4/permission',
     // Zalo Token交换地址（注意：需要使用POST方法）
@@ -179,93 +175,67 @@ async function handleAuthCallback() {
 
 // 使用授权码交换access_token
 async function exchangeCodeForToken(code) {
-    // 注意：Zalo的token交换需要在服务器端进行，因为需要app_secret
-    // 这里提供两种方案：
-    // 1. 如果中间页有自己的后端，通过后端API交换token
-    // 2. 如果app_secret在前端（不推荐，安全性低），直接调用Zalo API
+    // 使用app_secret直接在前端调用Zalo API交换token
+    // 注意：在生产环境中，app_secret通过URL传递存在安全风险，请谨慎使用
     
-    const tokenExchangeUrl = getUrlParameter('token_exchange_url');
-    
-    // if (tokenExchangeUrl) {
-    //     // 方案1：通过后端API交换token（推荐）
-    //     const response = await fetch(tokenExchangeUrl, {
-    //         method: 'POST',
-    //         headers: {
-    //             'Content-Type': 'application/json',
-    //         },
-    //         body: JSON.stringify({
-    //             code: code,
-    //             redirect_uri: ZALO_CONFIG.redirectUri
-    //         })
-    //     });
-
-    //     if (!response.ok) {
-    //         throw new Error(`Token交换失败：${response.statusText}`);
-    //     }
-
-    //     return await response.json();
-    // } else 
-    if (ZALO_CONFIG.appSecret) {
-        // 方案2：直接在前端调用（不推荐，仅用于测试）
-        console.warn('警告：在前端直接使用app_secret是不安全的，仅用于测试环境');
-        
-        // Zalo API需要使用POST方法
-        // 重要：secret_key必须作为HTTP Header传递，而不是在请求体中
-        // 注意：redirect_uri必须与授权请求时使用的完全一致
-        const tokenParams = new URLSearchParams({
-            app_id: ZALO_CONFIG.appId,
-            code: code,
-            grant_type: 'authorization_code'
-            // redirect_uri: ZALO_CONFIG.redirectUri,  // 如果需要，取消注释
-            // code_verifier: 'your_code_verifier'  // 可选，用于PKCE流程
-        });
-
-        // 调试信息
-        console.log('Token交换请求参数:', {
-            url: ZALO_CONFIG.tokenUrl,
-            app_id: ZALO_CONFIG.appId,
-            code: code ? code.substring(0, 20) + '...' : '缺失',
-            redirect_uri: ZALO_CONFIG.redirectUri,
-            has_secret_key: !!ZALO_CONFIG.appSecret
-        });
-
-        const response = await fetch(ZALO_CONFIG.tokenUrl, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/x-www-form-urlencoded',
-                'secret_key': ZALO_CONFIG.appSecret  // secret_key作为HTTP Header
-            },
-            body: tokenParams.toString()
-        });
-
-        if (!response.ok) {
-            const errorText = await response.text();
-            console.error('Token交换HTTP错误:', {
-                status: response.status,
-                statusText: response.statusText,
-                error: errorText
-            });
-            throw new Error(`Token交换失败：${response.status} ${response.statusText} - ${errorText}`);
-        }
-
-        const data = await response.json();
-        
-        if (data.error) {
-            console.error('Zalo API返回错误:', data);
-            
-            // 特殊处理 -14005 错误（授权码无效）
-            if (data.error === -14005 || data.error === '-14005') {
-                throw new Error('授权码无效或已过期，请重新进行授权。可能原因：1)授权码已使用 2)授权码已过期 3)redirect_uri不匹配');
-            }
-            
-            throw new Error(data.error_description || data.error || 'Token交换失败');
-        }
-
-        console.log('Token交换成功');
-        return data;
-    } else {
-        throw new Error('缺少token交换配置，请提供token_exchange_url或app_secret');
+    if (!ZALO_CONFIG.appSecret) {
+        throw new Error('缺少app_secret配置，无法进行token交换');
     }
+    
+    // Zalo API需要使用POST方法
+    // 重要：secret_key必须作为HTTP Header传递，而不是在请求体中
+    // 注意：redirect_uri必须与授权请求时使用的完全一致
+    const tokenParams = new URLSearchParams({
+        app_id: ZALO_CONFIG.appId,
+        code: code,
+        grant_type: 'authorization_code'
+        // redirect_uri: ZALO_CONFIG.redirectUri,  // 如果需要，取消注释
+        // code_verifier: 'your_code_verifier'  // 可选，用于PKCE流程
+    });
+
+    // 调试信息
+    console.log('Token交换请求参数:', {
+        url: ZALO_CONFIG.tokenUrl,
+        app_id: ZALO_CONFIG.appId,
+        code: code ? code.substring(0, 20) + '...' : '缺失',
+        redirect_uri: ZALO_CONFIG.redirectUri,
+        has_secret_key: !!ZALO_CONFIG.appSecret
+    });
+
+    const response = await fetch(ZALO_CONFIG.tokenUrl, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'secret_key': ZALO_CONFIG.appSecret  // secret_key作为HTTP Header
+        },
+        body: tokenParams.toString()
+    });
+
+    if (!response.ok) {
+        const errorText = await response.text();
+        console.error('Token交换HTTP错误:', {
+            status: response.status,
+            statusText: response.statusText,
+            error: errorText
+        });
+        throw new Error(`Token交换失败：${response.status} ${response.statusText} - ${errorText}`);
+    }
+
+    const data = await response.json();
+    
+    if (data.error) {
+        console.error('Zalo API返回错误:', data);
+        
+        // 特殊处理 -14005 错误（授权码无效）
+        if (data.error === -14005 || data.error === '-14005') {
+            throw new Error('授权码无效或已过期，请重新进行授权。可能原因：1)授权码已使用 2)授权码已过期 3)redirect_uri不匹配');
+        }
+        
+        throw new Error(data.error_description || data.error || 'Token交换失败');
+    }
+
+    console.log('Token交换成功');
+    return data;
 }
 
 // 获取用户信息
