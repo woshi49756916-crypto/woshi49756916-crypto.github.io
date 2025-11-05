@@ -69,30 +69,11 @@
         app_secret: params.get('app_secret'),
         redirect_uri: params.get('redirect_uri'),
         platform: params.get('platform') || 'web',
-        use_postmessage: params.get('use_postmessage') !== 'false', // 默认true，除非明确设为false
-        callback_scheme: params.get('callback_scheme') || 'flutterapp',
+        use_postmessage: params.get('use_postmessage') === 'true',
         // 授权回调参数
         code: params.get('code'),
         state: params.get('state'),
         error: params.get('error')
-      };
-    }
-    
-    // 获取配置参数（从URL参数或sessionStorage）
-    function getConfig() {
-      const urlParams = getUrlParams();
-      // 如果URL中有参数，优先使用URL参数
-      if (urlParams.app_id && urlParams.app_secret && urlParams.redirect_uri) {
-        return urlParams;
-      }
-      // 否则从sessionStorage获取（回调时使用）
-      return {
-        app_id: sessionStorage.getItem('zalo_app_id'),
-        app_secret: sessionStorage.getItem('zalo_app_secret'),
-        redirect_uri: sessionStorage.getItem('zalo_redirect_uri') || window.location.origin + window.location.pathname,
-        platform: sessionStorage.getItem('zalo_platform') || 'web',
-        use_postmessage: sessionStorage.getItem('zalo_use_postmessage') !== 'false',
-        callback_scheme: sessionStorage.getItem('zalo_callback_scheme') || 'flutterapp'
       };
     }
 
@@ -138,17 +119,16 @@
 
     // 发送消息给父窗口（支持Web和Flutter-web两种格式）
     function sendMessageToParent(type, data) {
-      const config = getConfig();
-      const usePostMessage = config.use_postmessage;
-      const platform = config.platform;
-      
-      if (window.opener && !window.opener.closed && usePostMessage) {
+      if (window.opener && !window.opener.closed) {
         try {
-          // Flutter-web格式（兼容之前的集成代码）
-          if (platform === 'flutter-web' || type === 'ZALO_LOGIN_SUCCESS' || type === 'ZALO_LOGIN_ERROR') {
-            // 判断是成功还是失败
-            const isSuccess = type === 'ZALO_LOGIN_SUCCESS';
-            
+          // 检测是否为Flutter-web调用（优先从sessionStorage读取，因为回调时URL参数可能不同）
+          const usePostMessage = sessionStorage.getItem('zalo_use_postmessage') === 'true';
+          const platform = sessionStorage.getItem('zalo_platform') || 'web';
+          const isFlutterWeb = usePostMessage || platform === 'flutter-web';
+          const isSuccess = type === 'ZALO_LOGIN_SUCCESS';
+          
+          if (isFlutterWeb) {
+            // Flutter-web格式
             if (isSuccess) {
               // 成功：发送Flutter-web格式
               const flutterResult = {
@@ -189,72 +169,26 @@
               window.opener.postMessage(flutterResult, '*');
               console.log('已发送Flutter-web错误消息');
             }
-            
-            // 同时发送Web格式（兼容性）
-            window.opener.postMessage({
-              type: type,
-              ...data
-            }, '*');
           } else {
             // Web格式（原有格式）
             window.opener.postMessage({
               type: type,
               ...data
             }, '*');
+            console.log('已发送Web格式消息:', type);
           }
         } catch (error) {
           console.error('发送消息失败:', error);
-          // 如果postMessage失败，尝试使用URL Scheme方案
-          fallbackToUrlScheme(isSuccess ? data : { error: data.error }, !isSuccess);
-        }
-      } else if (!usePostMessage) {
-        // 不使用postMessage，使用URL Scheme方案
-        const isSuccess = type === 'ZALO_LOGIN_SUCCESS';
-        fallbackToUrlScheme(isSuccess ? data : { error: data.error }, !isSuccess);
-      }
-    }
-    
-    // URL Scheme方案（备用方案）
-    function fallbackToUrlScheme(result, isError) {
-      try {
-        const config = getConfig();
-        const params = new URLSearchParams();
-        
-        if (isError) {
-          params.append('error', result.error || 'unknown_error');
-          if (result.error_code) {
-            params.append('error_code', result.error_code);
-          }
-          if (result.error_details) {
-            params.append('error_details', result.error_details);
-          }
-        } else {
-          params.append('access_token', result.access_token);
-          params.append('user_id', result.userInfo?.id?.toString() || '');
-          if (result.tokenResponse?.expires_in) {
-            params.append('expires_in', result.tokenResponse.expires_in);
+          // 如果发送失败，尝试使用原始格式
+          try {
+            window.opener.postMessage({
+              type: type,
+              ...data
+            }, '*');
+          } catch (e) {
+            console.error('发送消息完全失败:', e);
           }
         }
-        
-        const callbackUrl = `${config.callback_scheme}://zalo_auth_callback?${params.toString()}`;
-        window.location.href = callbackUrl;
-        
-        setTimeout(() => {
-          try {
-            window.close();
-          } catch (closeErr) {
-            console.warn('无法关闭窗口:', closeErr);
-          }
-        }, 1000);
-      } catch (error) {
-        console.error('URL Scheme方案失败:', error);
-        setTimeout(() => {
-          try {
-            window.close();
-          } catch (closeErr) {
-            console.warn('无法关闭窗口:', closeErr);
-          }
-        }, 500);
       }
     }
 
@@ -312,60 +246,54 @@
     async function handleCallback(params) {
       const { code, state, error } = params;
 
-      // 从配置获取参数（优先从URL，否则从sessionStorage）
-      const config = getConfig();
-      const app_id = config.app_id;
-      const app_secret = config.app_secret;
+      // 从 sessionStorage 获取保存的参数
+      const app_id = sessionStorage.getItem('zalo_app_id');
+      const app_secret = sessionStorage.getItem('zalo_app_secret');
 
-      // 清理sessionStorage的辅助函数
-      function cleanupStorage() {
+      if (error) {
+        showError('授权失败: ' + error);
+        sendMessageToParent('ZALO_LOGIN_ERROR', { 
+          error: error,
+          error_code: error
+        });
+        // 清理 sessionStorage
         sessionStorage.removeItem('zalo_app_id');
         sessionStorage.removeItem('zalo_app_secret');
         sessionStorage.removeItem('zalo_code_verifier');
-        sessionStorage.removeItem('zalo_redirect_uri');
         sessionStorage.removeItem('zalo_platform');
         sessionStorage.removeItem('zalo_use_postmessage');
-        sessionStorage.removeItem('zalo_callback_scheme');
-      }
-      
-      if (error) {
-        showError('授权失败: ' + error);
-        sendMessageToParent('ZALO_LOGIN_ERROR', { error: error, error_code: error });
-        cleanupStorage();
         setTimeout(() => {
-          try {
-            window.close();
-          } catch (e) {
-            console.warn('无法关闭窗口:', e);
-          }
+          window.close();
         }, 2000);
         return;
       }
 
       if (!code || !state) {
         showError('缺少必要的授权参数');
-        sendMessageToParent('ZALO_LOGIN_ERROR', { error: 'missing_params', error_code: 'missing_params' });
-        cleanupStorage();
+        sendMessageToParent('ZALO_LOGIN_ERROR', { 
+          error: 'missing_params',
+          error_code: 'missing_params'
+        });
+        // 清理 sessionStorage
+        sessionStorage.removeItem('zalo_app_id');
+        sessionStorage.removeItem('zalo_app_secret');
+        sessionStorage.removeItem('zalo_code_verifier');
+        sessionStorage.removeItem('zalo_platform');
+        sessionStorage.removeItem('zalo_use_postmessage');
         setTimeout(() => {
-          try {
-            window.close();
-          } catch (e) {
-            console.warn('无法关闭窗口:', e);
-          }
+          window.close();
         }, 2000);
         return;
       }
 
       if (!app_id || !app_secret) {
         showError('缺少必要的配置参数（app_id 或 app_secret）');
-        sendMessageToParent('ZALO_LOGIN_ERROR', { error: 'missing_config', error_code: 'missing_config' });
-        cleanupStorage();
+        sendMessageToParent('ZALO_LOGIN_ERROR', { 
+          error: 'missing_config',
+          error_code: 'missing_config'
+        });
         setTimeout(() => {
-          try {
-            window.close();
-          } catch (e) {
-            console.warn('无法关闭窗口:', e);
-          }
+          window.close();
         }, 2000);
         return;
       }
@@ -376,14 +304,18 @@
       
       if (!code_verifier) {
         showError('无效的 state 参数');
-        sendMessageToParent('ZALO_LOGIN_ERROR', { error: 'invalid_state', error_code: 'invalid_state' });
-        cleanupStorage();
+        sendMessageToParent('ZALO_LOGIN_ERROR', { 
+          error: 'invalid_state',
+          error_code: 'invalid_state'
+        });
+        // 清理 sessionStorage
+        sessionStorage.removeItem('zalo_app_id');
+        sessionStorage.removeItem('zalo_app_secret');
+        sessionStorage.removeItem('zalo_code_verifier');
+        sessionStorage.removeItem('zalo_platform');
+        sessionStorage.removeItem('zalo_use_postmessage');
         setTimeout(() => {
-          try {
-            window.close();
-          } catch (e) {
-            console.warn('无法关闭窗口:', e);
-          }
+          window.close();
         }, 2000);
         return;
       }
@@ -417,15 +349,13 @@
           }
 
           // 清理 sessionStorage
-          cleanupStorage();
+          sessionStorage.removeItem('zalo_app_id');
+          sessionStorage.removeItem('zalo_app_secret');
+          sessionStorage.removeItem('zalo_code_verifier');
 
           // 延迟关闭窗口
           setTimeout(() => {
-            try {
-              window.close();
-            } catch (e) {
-              console.warn('无法关闭窗口:', e);
-            }
+            window.close();
           }, 1000);
         } else {
           const errorMsg = tokenResponse.error_description || tokenResponse.error || '获取 access_token 失败';
@@ -438,13 +368,11 @@
             tokenResponse: tokenResponse
           });
           // 清理 sessionStorage
-          cleanupStorage();
+          sessionStorage.removeItem('zalo_app_id');
+          sessionStorage.removeItem('zalo_app_secret');
+          sessionStorage.removeItem('zalo_code_verifier');
           setTimeout(() => {
-            try {
-              window.close();
-            } catch (e) {
-              console.warn('无法关闭窗口:', e);
-            }
+            window.close();
           }, 2000);
         }
       } catch (error) {
@@ -457,20 +385,20 @@
           error_details: error.error_description || null
         });
         // 清理 sessionStorage
-        cleanupStorage();
+        sessionStorage.removeItem('zalo_app_id');
+        sessionStorage.removeItem('zalo_app_secret');
+        sessionStorage.removeItem('zalo_code_verifier');
+        sessionStorage.removeItem('zalo_platform');
+        sessionStorage.removeItem('zalo_use_postmessage');
         setTimeout(() => {
-          try {
-            window.close();
-          } catch (e) {
-            console.warn('无法关闭窗口:', e);
-          }
+          window.close();
         }, 2000);
       }
     }
 
     // 初始化授权流程
     function initAuth(params) {
-      const { app_id, app_secret, redirect_uri, platform, use_postmessage, callback_scheme } = params;
+      const { app_id, app_secret, redirect_uri } = params;
 
       if (!app_id || !app_secret || !redirect_uri) {
         showError('缺少必要的参数: app_id、app_secret 和 redirect_uri 是必需的');
@@ -480,6 +408,9 @@
             error: '缺少必要的参数: app_id、app_secret 和 redirect_uri 是必需的',
             error_code: 'missing_params'
           });
+          setTimeout(() => {
+            window.close();
+          }, 2000);
         }
         return;
       }
@@ -487,10 +418,16 @@
       // 保存参数到 sessionStorage，以便回调时使用
       sessionStorage.setItem('zalo_app_id', app_id);
       sessionStorage.setItem('zalo_app_secret', app_secret);
-      sessionStorage.setItem('zalo_redirect_uri', redirect_uri);
-      sessionStorage.setItem('zalo_platform', platform || 'web');
-      sessionStorage.setItem('zalo_use_postmessage', use_postmessage !== false ? 'true' : 'false');
-      sessionStorage.setItem('zalo_callback_scheme', callback_scheme || 'flutterapp');
+      // 保存平台信息，以便回调时识别格式
+      const params = getUrlParams();
+      if (params.platform) {
+        sessionStorage.setItem('zalo_platform', params.platform);
+      }
+      // 保存use_postmessage设置（如果URL中有该参数）
+      const urlParams = new URLSearchParams(window.location.search);
+      if (urlParams.has('use_postmessage')) {
+        sessionStorage.setItem('zalo_use_postmessage', params.use_postmessage === true ? 'true' : 'false');
+      }
 
       // 生成 code_verifier 和 code_challenge
       const { code_verifier, code_challenge } = generateCodeChallenge();
