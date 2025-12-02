@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="zh-Hans">
+<html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -7,158 +7,192 @@
     <script src="https://accounts.google.com/gsi/client" async defer></script>
     <style>
       :root {
-        color-scheme: light dark;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        background: #f6f7fb;
+        color: #1f1f1f;
       }
       body {
-        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
         margin: 0;
         min-height: 100vh;
         display: flex;
         align-items: center;
         justify-content: center;
-        padding: 24px;
-        background: #f8f9fa;
       }
-      main {
-        width: min(420px, 100%);
+      .card {
+        width: min(420px, 90vw);
         background: #fff;
-        border-radius: 16px;
-        padding: 32px;
-        box-shadow: 0 20px 60px rgba(15, 23, 42, 0.15);
+        border-radius: 18px;
+        box-shadow: 0 20px 35px rgba(15, 23, 42, 0.1);
+        padding: 32px 36px;
+        text-align: center;
       }
       h1 {
         font-size: 1.4rem;
         margin-bottom: 0.5rem;
       }
       p {
-        color: #4b5563;
-        line-height: 1.6;
+        font-size: 0.95rem;
+        color: #555;
       }
       button {
         width: 100%;
-        padding: 14px;
-        border-radius: 12px;
-        font-size: 1rem;
-        cursor: pointer;
-        border: none;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 12px;
         background: #1a73e8;
         color: #fff;
+        font-size: 1rem;
+        border: none;
+        border-radius: 12px;
+        padding: 14px 20px;
+        cursor: pointer;
+        margin-top: 18px;
+        transition: background 0.2s ease;
       }
-      #log {
-        margin-top: 16px;
-        font-size: 0.9rem;
-        color: #6b7280;
-        word-break: break-word;
+      button:disabled {
+        background: #94a3b8;
+        cursor: not-allowed;
+      }
+      pre {
+        text-align: left;
+        background: #0f172a;
+        color: #e2e8f0;
+        padding: 12px;
+        border-radius: 12px;
+        max-height: 240px;
+        overflow: auto;
+        margin-top: 20px;
+      }
+      .error {
+        color: #c53030;
+        margin-top: 18px;
       }
     </style>
   </head>
   <body>
-    <main>
-      <h1>Google OAuth 中间页</h1>
-      <p>
-        该页面接收 Flutter iOS 端提供的 Client ID，完成 Google 登录后将
-        accessToken / id / email / displayName / photoUrl 等信息通过
-        postMessage 返回。
-      </p>
-      <button id="loginBtn">使用 Google 登录</button>
-      <div id="log"></div>
-    </main>
+    <div class="card">
+      <h1>Google 授权中间页</h1>
+      <p id="message">正在初始化...</p>
+      <button id="authButton" disabled>使用 Google 登录</button>
+      <div id="debug" hidden>
+        <p>调试输出：</p>
+        <pre id="result"></pre>
+      </div>
+      <p class="error" id="error"></p>
+    </div>
 
     <script>
-      const log = (msg) => {
-        const logEl = document.getElementById("log");
-        logEl.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
-      };
+      const authButton = document.getElementById("authButton");
+      const errorBox = document.getElementById("error");
+      const messageBox = document.getElementById("message");
+      const debugBox = document.getElementById("debug");
+      const resultBox = document.getElementById("result");
+      const urlParams = new URLSearchParams(window.location.search);
+      const clientId = urlParams.get("client_id");
+      const debug = urlParams.get("debug") === "true";
+      let tokenClient = null;
 
-      // 解析 URL 中的查询参数，Flutter 端需至少传 clientId
-      const params = new URLSearchParams(window.location.search);
-      const clientId = params.get("clientId");
-      const nonce = params.get("nonce") || crypto.randomUUID();
-
-      if (!clientId) {
-        log("缺少 clientId，无法初始化 Google 登录");
+      function reportError(text) {
+        errorBox.textContent = text;
+        console.error(text);
       }
 
-      let googleTokenClient;
-      let bootstrapAttempts = 0;
+      function postToHost(payload) {
+        const serialized = JSON.stringify(payload);
+        if (window.ReactNativeWebView?.postMessage) {
+          window.ReactNativeWebView.postMessage(serialized);
+        }
+        if (window.AppBridge?.postMessage) {
+          window.AppBridge.postMessage(serialized);
+        }
+        if (window.parent && window.parent !== window) {
+          window.parent.postMessage(payload, "*");
+        }
+        if (debug) {
+          debugBox.hidden = false;
+          resultBox.textContent = serialized;
+        }
+      }
 
-      const bootstrapGoogleClient = () => {
+      function buildPayload(tokenResponse, profile) {
+        return {
+          accessToken: tokenResponse?.access_token ?? "",
+          expireIn: tokenResponse?.expires_in ?? 0,
+          idToken: tokenResponse?.id_token ?? "",
+          id: profile?.sub ?? "",
+          email: profile?.email ?? "",
+          emailVerified: profile?.email_verified ?? false,
+          displayName: profile?.name ?? "",
+          givenName: profile?.given_name ?? "",
+          familyName: profile?.family_name ?? "",
+          photoUrl: profile?.picture ?? "",
+          locale: profile?.locale ?? "",
+          provider: "google",
+          timestamp: Date.now(),
+        };
+      }
+
+      function initialize() {
         if (!clientId) {
-          log("缺少 clientId，无法初始化 Google 登录");
+          reportError("缺少 client_id 参数，无法继续。");
+          messageBox.textContent = "请从 App 端传入 client_id。";
           return;
         }
-        if (!window.google || !google.accounts || !google.accounts.oauth2) {
-          bootstrapAttempts += 1;
-          if (bootstrapAttempts % 5 === 0) {
-            log("Google SDK 尚未加载，稍后自动重试...");
-          }
-          window.requestAnimationFrame(bootstrapGoogleClient);
-          return;
-        }
-
-        googleTokenClient = google.accounts.oauth2.initTokenClient({
+        messageBox.textContent = "已获取 client_id，等待用户授权。";
+        authButton.disabled = false;
+        tokenClient = google.accounts.oauth2.initTokenClient({
           client_id: clientId,
-          scope:
-            "openid email profile https://www.googleapis.com/auth/userinfo.profile",
-          callback: handleCredentialResponse,
-          prompt: "consent",
-          nonce,
+          scope: "openid email profile",
+          callback: async (tokenResponse) => {
+            try {
+              if (!tokenResponse?.access_token) {
+                throw new Error("Google 返回的 access_token 为空");
+              }
+              const profileResp = await fetch(
+                "https://www.googleapis.com/oauth2/v3/userinfo",
+                {
+                  headers: {
+                    Authorization: `Bearer ${tokenResponse.access_token}`,
+                  },
+                }
+              );
+              if (!profileResp.ok) {
+                throw new Error("获取用户信息失败");
+              }
+              const profile = await profileResp.json();
+              postToHost(buildPayload(tokenResponse, profile));
+              messageBox.textContent = "授权成功，数据已发送给 App。";
+            } catch (err) {
+              reportError(err.message);
+              postToHost({ error: err.message, provider: "google" });
+            }
+          },
+          error_callback: (err) => {
+            const message = err?.message || "用户取消或授权失败";
+            reportError(message);
+            postToHost({ error: message, provider: "google" });
+          },
         });
+      }
 
-        log("Google Token Client 初始化成功，等待用户点击登录按钮");
-      };
-
-      window.addEventListener("load", bootstrapGoogleClient);
-
-      document.getElementById("loginBtn").addEventListener("click", () => {
-        if (!googleTokenClient) {
-          log("Google Token Client 未就绪，正在重试初始化...");
-          bootstrapGoogleClient();
+      authButton.addEventListener("click", () => {
+        if (!tokenClient) {
+          reportError("TokenClient 尚未就绪");
           return;
         }
-        googleTokenClient.requestAccessToken();
+        messageBox.textContent = "等待 Google 返回授权结果...";
+        tokenClient.requestAccessToken({ prompt: "consent" });
       });
 
-      async function handleCredentialResponse(tokenResponse) {
-        try {
-          log("获取 accessToken 成功，拉取用户信息...");
-          const userInfo = await fetch(
-            "https://www.googleapis.com/oauth2/v3/userinfo",
-            {
-              headers: {
-                Authorization: `Bearer ${tokenResponse.access_token}`,
-              },
-            }
-          ).then((res) => res.json());
-
-          const payload = {
-            accessToken: tokenResponse.access_token,
-            id: userInfo.sub,
-            email: userInfo.email,
-            displayName: userInfo.name,
-            photoUrl: userInfo.picture,
-            expiresIn: tokenResponse.expires_in,
-            issuedAt: Date.now(),
-            nonce,
-          };
-
-          // 将结果返回给 Flutter 宿主。若在 SFSafariViewController 中，可使用 window.webkit.messageHandlers。
-          if (window.opener) {
-            window.opener.postMessage(payload, params.get("origin") || "*");
-            log("结果已通过 window.opener.postMessage 发送");
-          }
-          if (window.ReactNativeWebView) {
-            window.ReactNativeWebView.postMessage(JSON.stringify(payload));
-            log("结果已通过 ReactNativeWebView.postMessage 发送");
-          }
-          if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.googleAuthBridge) {
-            window.webkit.messageHandlers.googleAuthBridge.postMessage(payload);
-            log("结果已通过 iOS message handler 发送");
-          }
-        } catch (err) {
-          log(`拉取用户信息失败: ${err.message}`);
+      window.addEventListener("message", (event) => {
+        if (event.data?.type === "update_client_id" && event.data.clientId) {
+          urlParams.set("client_id", event.data.clientId);
+          initialize();
         }
-      }
+      });
+
+      window.addEventListener("DOMContentLoaded", initialize);
     </script>
   </body>
 </html>
