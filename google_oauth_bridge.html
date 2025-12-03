@@ -137,7 +137,7 @@
           // 将数据编码到 URL 参数中
           const encodedData = encodeURIComponent(serialized);
           const callbackUrl = redirectUri + (redirectUri.includes("?") ? "&" : "?") + "data=" + encodedData;
-          
+          reportError(callbackUrl);
           // 跳转回 App（通过 Universal Links 或自定义 Scheme）
           window.location.href = callbackUrl;
           return;
